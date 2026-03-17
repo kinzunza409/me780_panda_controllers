@@ -1,0 +1,13 @@
+<mujoco>
+  <include file="/workspace/assets/models/franka_emika_panda/sc1ene.xml"/>
+  
+  <actuator>
+    <motor name="actuator1" joint="joint1" gear="1" ctrllimited="true" ctrlrange="-87 87"/>
+    <motor name="actuator2" joint="joint2" gear="1" ctrllimited="true" ctrlrange="-87 87"/>
+    <motor name="actuator3" joint="joint3" gear="1" ctrllimited="true" ctrlrange="-87 87"/>
+    <motor name="actuator4" joint="joint4" gear="1" ctrllimited="true" ctrlrange="-87 87"/>
+    <motor name="actuator5" joint="joint5" gear="1" ctrllimited="true" ctrlrange="-12 12"/>
+    <motor name="actuator6" joint="joint6" gear="1" ctrllimited="true" ctrlrange="-12 12"/>
+    <motor name="actuator7" joint="joint7" gear="1" ctrllimited="true" ctrlrange="-12 12"/>
+  </actuator>
+</mujoco>

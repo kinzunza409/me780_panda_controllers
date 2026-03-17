@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
 
 # Python Dependancies
 RUN python3 -m pip install \
-    mujoco==3.6.0
+    mujoco==3.6.0 \
+    dm_control==1.0.38
 
 RUN sed -i 's/#force_color_prompt=yes/force_color_prompt=yes/' /root/.bashrc
 
