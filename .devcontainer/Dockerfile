@@ -1,6 +1,6 @@
 FROM osrf/ros:humble-desktop-full-jammy
 
-# Package Installs
+# System Dependanices
 RUN apt-get update && apt-get install -y \
     python3-pip \
     mesa-utils \
@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     tree \
     && rm -rf /var/lib/apt/lists/*
 
-# Python Package Installs
+# Python Dependancies
 RUN python3 -m pip install \
     mujoco==3.6.0
 
