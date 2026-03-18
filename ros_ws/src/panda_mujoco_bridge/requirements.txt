@@ -1,0 +1,3 @@
+dm_control==1.0.38
+mujoco==3.6.0
+numpy==1.21.5

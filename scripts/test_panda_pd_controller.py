@@ -5,8 +5,8 @@ import mujoco.viewer
 from dm_control import mjcf
 
 n_joints = 7 # only manipulator, no gripper
-Kp = 1000*np.ones(n_joints)
-Kd = 500*np.ones(n_joints)
+Kp = 500*np.ones(n_joints)
+Kd = 100*np.ones(n_joints)
 
 qd = np.ones(n_joints)
 qd[3] = -1
@@ -47,7 +47,7 @@ def main():
                 qdot = data.qvel[:n_joints],
                 qdot_d = qdot_d)
             
-            #data.ctrl[:n_joints] = tau
+            data.ctrl[:n_joints] = tau
 
             mujoco.mj_step(model, data)
             viewer.sync()

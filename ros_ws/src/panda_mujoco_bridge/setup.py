@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'mujoco_bridge = panda_mujoco_bridge.mujoco_bridge:main'
         ],
     },
 )
