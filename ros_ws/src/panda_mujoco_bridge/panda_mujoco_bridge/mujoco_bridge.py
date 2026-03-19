@@ -59,8 +59,11 @@ class MuJoCoBridge(Node):
 
 
     def subscriber_callback(self, msg : JointState):
+
+        # TODO: add code to check if efforts are above torque limits and add a warn
         
-        self.data.ctrl[:] = msg.effort
+        self.data.ctrl[:len(msg.effort)] = msg.effort.tolist()
+        #print(msg.effort)
 
     
     def viewer_callback(self):
@@ -93,7 +96,7 @@ class MuJoCoBridge(Node):
 
         return model
     
-    def destro_node(self):
+    def destroy_node(self):
         if self.viewer is not None:
             self.viewer.close()
         super().destroy_node()

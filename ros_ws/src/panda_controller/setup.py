@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'pd_controller = panda_controller.pd_controller:main'
         ],
     },
 )
