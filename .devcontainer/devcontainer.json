@@ -37,7 +37,7 @@
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
                 "ms-python.python",
                 "Ranch-Hand-Robotics.rde-ros-1"
             ],

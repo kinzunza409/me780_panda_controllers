@@ -10,3 +10,9 @@ __pycache__/
 
 # VS Code
 .vscode/
+
+# Standalone CMake build artifacts
+scripts/panda_ik/build/
+
+# Compiled Python extension modules (pybind11 output)
+*.so
