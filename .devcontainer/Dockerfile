@@ -3,6 +3,7 @@ FROM osrf/ros:humble-desktop-full-jammy
 # System Dependanices
 RUN apt-get update && apt-get install -y \
     ros-humble-pinocchio \
+    ros-humble-franka-description \
     python3-pip \
     mesa-utils \
     less \
