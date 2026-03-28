@@ -24,7 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'pd_controller = panda_controller.pd_controller:main'
+            'pd_controller = panda_controller.pd_controller:main',
+            'impedence = panda_controller.impedence_controller:main'
         ],
     },
 )

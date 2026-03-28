@@ -14,6 +14,7 @@ class MuJoCoBridge(Node):
         self.get_logger().info('MuJoCoBridge started...')
 
         self.display_on = self.declare_parameter("display_on", True)
+        self.axes_on = self.declare_parameter("axes_on", False)
         self.display_freq = self.declare_parameter("display_freq", 60)
 
         self.model_path = self.declare_parameter("model_path", "/workspace/assets/models/franka_emika_panda/scene.xml").get_parameter_value().string_value
@@ -23,8 +24,14 @@ class MuJoCoBridge(Node):
         if self.display_on.get_parameter_value().bool_value:
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             self.get_logger().info('MuJoCo display opened...')
+
+            if self.axes_on.get_parameter_value().bool_value:
+                self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_BODY
         else:
             self.viewer = None
+
+        
+
 
         self.joint_names = [self.model.joint(i).name for i in range(self.model.njnt)]
         
