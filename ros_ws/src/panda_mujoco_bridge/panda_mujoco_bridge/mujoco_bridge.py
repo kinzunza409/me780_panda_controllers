@@ -35,7 +35,6 @@ class MuJoCoBridge(Node):
         else:
             self.viewer = None
 
-        
 
 
         self.joint_names = [self.model.joint(i).name for i in range(self.model.njnt)]
@@ -54,7 +53,6 @@ class MuJoCoBridge(Node):
             with self.viewer.lock():
                 mujoco.mj_step(self.model, self.data)
                 mujoco.mj_rnePostConstraint(self.model, self.data)
-                self.get_logger().info("rnePostConstraint called")
         else:
             mujoco.mj_step(self.model, self.data)
 
@@ -88,20 +86,6 @@ class MuJoCoBridge(Node):
         w.wrench.force = self.list_to_vector3(wrench[3:6])
         w.wrench.torque = self.list_to_vector3(wrench[0:3])
 
-        self.get_logger().info(f"cfrc_ext hand:         {self.data.cfrc_ext[self.hand_id]}")
-        self.get_logger().info(f"cfrc_ext left_finger:  {self.data.cfrc_ext[self.left_finger_id]}")
-        self.get_logger().info(f"cfrc_ext right_finger: {self.data.cfrc_ext[self.right_finger_id]}")
-        self.get_logger().info(f"xfrc_applied hand:         {self.data.xfrc_applied[self.hand_id]}")
-        self.get_logger().info(f"xfrc_applied left_finger:  {self.data.xfrc_applied[self.left_finger_id]}")
-        self.get_logger().info(f"xfrc_applied right_finger: {self.data.xfrc_applied[self.right_finger_id]}")
-
-        for i in range(self.data.ncon):
-            self.get_logger().info(f"contact force {i}: {self.data.contact[i].frame}")
-
-        for i in range(self.data.ncon):
-            force = np.zeros(6)
-            mujoco.mj_contactForce(self.model, self.data, i, force)
-            self.get_logger().info(f"contact {i} force: {force}")
 
         self.pub_wrench.publish(w)
 
@@ -119,30 +103,6 @@ class MuJoCoBridge(Node):
         if self.viewer is not None:
             self.viewer.sync()
 
-
-    # converts Panda Model from position input (with built in PID) to torque input
-    def model_to_torque_control(self, path):
-        
-        #root = mjcf.from_path("/workspace/assets/models/franka_emika_panda/scene.xml")
-        root = mjcf.from_path(path)
-    
-        for actuator in root.find_all('actuator'):
-            actuator.remove()
-
-        # Add motor actuators for arm joints only
-        root.actuator.add('motor', name='actuator1', joint='joint1', gear=[1], ctrllimited=True, ctrlrange=[-87, 87])
-        root.actuator.add('motor', name='actuator2', joint='joint2', gear=[1], ctrllimited=True, ctrlrange=[-87, 87])
-        root.actuator.add('motor', name='actuator3', joint='joint3', gear=[1], ctrllimited=True, ctrlrange=[-87, 87])
-        root.actuator.add('motor', name='actuator4', joint='joint4', gear=[1], ctrllimited=True, ctrlrange=[-87, 87])
-        root.actuator.add('motor', name='actuator5', joint='joint5', gear=[1], ctrllimited=True, ctrlrange=[-12, 12])
-        root.actuator.add('motor', name='actuator6', joint='joint6', gear=[1], ctrllimited=True, ctrlrange=[-12, 12])
-        root.actuator.add('motor', name='actuator7', joint='joint7', gear=[1], ctrllimited=True, ctrlrange=[-12, 12])
-        root.actuator.add('motor', name='actuator8', tendon='split', gear=[1], ctrllimited=True, ctrlrange=[-100, 100])
-
-        physics = mjcf.Physics.from_mjcf_model(root)
-        model = physics.model.ptr
-
-        return model
 
     @staticmethod
     def list_to_vector3(v):
