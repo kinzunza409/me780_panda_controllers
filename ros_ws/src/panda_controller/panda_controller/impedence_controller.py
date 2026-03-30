@@ -1,6 +1,4 @@
 import debugpy
-debugpy.listen(("0.0.0.0", 5678))
-
 import numpy as np
 
 import rclpy
@@ -23,14 +21,25 @@ class ImpedenceController(Node):
     _DEFAULT_K_D = np.diag([150, 150, 150, 8, 8, 8])
     _DEFAULT_D_D = np.diag([30, 30, 30, 3, 3, 3])
 
-    _DEFAULT_x_d = np.array([0.3, 0.0, 0.4, np.pi, 0, 0])
+    _DEFAULT_x_d = np.concatenate([
+        np.array([0.5545, 0.0, 0.6245]),
+        np.array([2.2216, 2.2214, 0.0])
+    ])
     _DEFAULT_x_d_dot = np.zeros(6)
     _DEFAULT_x_d_ddot = np.zeros(6)
 
     def __init__(self):
         super().__init__("impedence_controller")
-
         self.get_logger().info("Impedence Controller node started...")
+
+        # Debug
+        self.debug_mode = self.declare_parameter('debug_mode', False).get_parameter_value().bool_value
+        if self.debug_mode:
+            debugpy.listen(("0.0.0.0", 5678))
+            self.get_logger().warn("Debug enabled! Waiting for connection...")
+            debugpy.wait_for_client()
+            self.get_logger().info("Debugger connected!")
+            
 
         # Params
         self.freq = self.declare_parameter("control_loop_frequency", self._DEFAULT_CTRL_LOOP_FREQ_HZ).get_parameter_value().integer_value
@@ -45,10 +54,10 @@ class ImpedenceController(Node):
         self.Lambda_d = self._DEFAULT_LAMDA_D
         self.K_d = self._DEFAULT_K_D
         self.D_d = self._DEFAULT_D_D
+        self.F_ext = np.zeros(6)
 
         # Initialize Pinocchio
         model_path = "/workspace/assets/models/franka_emika_panda/panda.xml"
-        # TODO: fix the end effector to reduce the model
         full_model, *_ = pin.buildModelsFromMJCF(model_path)
         self.model = pin.buildReducedModel(full_model, [8, 9], self._STARTING_Q) # lock gripper joints in place
         self.data = self.model.createData()
@@ -71,61 +80,78 @@ class ImpedenceController(Node):
         if self.start_ctrl_loop:
             # update Pinocchio data
             pin.forwardKinematics(self.model, self.data, self.q, self.qdot)
-            J = pin.computeFrameJacobian(self.model, self.data, self.q,
-                    self.model.nframes - 1, 
-                    pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
-            J_dot = pin.computeJointJacobiansTimeVariation(self.model, self.data, self.q, self.qdot)
+            frame_id = self.model.getFrameId("hand")
+            J = pin.computeFrameJacobian(self.model, self.data, self.q, 
+                frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
+            pin.computeJointJacobiansTimeVariation(self.model, self.data, self.q, self.qdot)
+            J_dot = pin.getFrameJacobianTimeVariation(self.model, self.data,
+                frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
             C = pin.computeCoriolisMatrix(self.model, self.data, self.q, self.qdot)
             M = pin.crba(self.model, self.data, self.q) # mass matrix (only upper triangular)
+            M = np.triu(M) + np.triu(M, 1).T  # symmetrize
             g = pin.computeGeneralizedGravity(self.model, self.data, self.q)
 
-            # get joint data
+            # get setpoints
+            x_d = self.x_d
+            x_d_dot = self.x_d_dot
+            x_d_ddot = self.x_d_ddot
+            
+            # get sim data
             q = self.q
             q_dot = self.qdot
             tau = self.tau
+            F_ext = self.F_ext
 
             # get controller parameters
             Lambda_d = self.Lambda_d
             K_d = self.K_d
             D_d = self.D_d
 
-            T_ee = self.data.oMf[-1] # transform from world to EE
+            T_ee = self.data.oMf[frame_id] # transform from world to EE
+
+            # matrix operations
+            J_T = np.transpose(J)
+            M_inv = np.linalg.inv(M)
 
             # forward kinematics
-            x = np.concatenate([
-                T_ee.translation,
-                pin.rpy.matrixToRpy(T_ee.rotation)])
+            x_pos = T_ee.translation
+            x_rot = pin.Quaternion(T_ee.rotation)
             x_dot = J @ q_dot
 
-            # forward dynamics
-            q_ddot = np.linalg.solve(M, tau - C@q_dot - g) # use np solver to avoid calcuating M_inverse
-            #x_ddot = J @ q_ddot + J_dot @ q_dot
-            x_ddot = q_ddot[:6]
-            
-            # get errors
-            # TODO: Lectures show e = x - x_d but logically it should be the other way around. Look into this
-            #e       =   self.x_d - x
-            #e_dot   =   self.x_d_dot - x_dot
-            e = x - self.x_d
-            e_dot = x_dot -self.x_d_dot
-            #e_ddot  =   x_ddot - self.x_d_ddot
+            # calculate errors
+            x_d_rot = pin.Quaternion(pin.exp3(x_d[3:]))
+            x_d_rot = x_d_rot if x_rot.dot(x_d_rot) > 0 else pin.Quaternion(-x_d_rot.coeffs())
+            e = np.concatenate([
+                x_pos - x_d[:3],                       # translation
+                (x_d_rot.inverse() * x_rot).vec()      # rotation
+            ])
+            e_dot = x_dot - x_d_dot
 
-            self.get_logger().info(f"e: {np.linalg.norm(e):.4f}  e_dot: {np.linalg.norm(e_dot):.4f}", throttle_duration_sec=10)
+            self.get_logger().info(
+                f"e_pos: {np.linalg.norm(e[:3]):.3f}  "
+                f"e_rot: {np.linalg.norm(e[3:]):.3f}  "
+                f"e_dot_pos: {np.linalg.norm(e_dot[:3]):.3f}  "
+                f"e_dot_rot: {np.linalg.norm(e_dot[3:]):.3f}",
+                throttle_duration_sec=10
+            )
 
-            # Calculate F_ext
-            #F_ext = Lambda_d @ e_ddot + D_d @ e_dot + K_d @ e
-            #self.get_logger().info(f'F_ext: [Fx={F_ext[0]:.3f}, Fy={F_ext[1]:.3f}, Fz={F_ext[2]:.3f}] N, M_ext: [Mx={F_ext[3]:.3f}, My={F_ext[4]:.3f}, Mz={F_ext[5]:.3f}] Nm', throttle_duration_sec=30)
-            
+            # calculate task space inertia
+            Lambda = np.linalg.inv(J @ M_inv @ J_T)
 
-            # TODO: Re-read paper, F_ext and F_d are probably different - I think I am finding x_ddot the wrong way
-            
-            # Basic impedence control from lecture for now
-            F = K_d @ e + D_d @ e_dot
-            tau_d = np.transpose(J) @ F + C @ q_dot + g
+            # calculate virtual cartesian wrench
+            Lambda_d_inv = np.linalg.inv(Lambda_d)
+            F_tau = Lambda @ x_d_ddot - Lambda @ Lambda_d_inv @ (D_d @ e_dot + K_d @ e) + (Lambda @ Lambda_d_inv - np.eye(6)) @ F_ext - Lambda @ J_dot @ q_dot
+
+            # calculate desired torques
+            tau_d = J_T @ F_tau + C @ q_dot + g
+
             msg = JointState()
             msg.effort = tau_d.tolist()
-
             self.pub_joint_torques.publish(msg)
+
+            self.get_logger().info(f"F_ext: {self.F_ext}", throttle_duration_sec=10)
+            self.get_logger().info(f"q: {np.round(q, 3)}", throttle_duration_sec=10)
+            self.get_logger().info(f"tau: {np.round(tau_d, 3)}", throttle_duration_sec=10)
         
 
     def joint_states_callback(self, msg : JointState):
@@ -141,11 +167,12 @@ class ImpedenceController(Node):
 
 
     def wrench_callback(self, msg : WrenchStamped):
-
+        
         self.F_ext = np.array([
-            msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z, 
-            msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
-        ])
+                msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z, 
+                msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
+            ])
+        
 
 def main(args=None):
     rclpy.init(args=args)
