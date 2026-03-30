@@ -6,6 +6,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import WrenchStamped
 
 import pinocchio as pin
 
@@ -62,6 +63,7 @@ class ImpedenceController(Node):
 
         # Subscribers
         self.sub_joint_states = self.create_subscription(JointState, "joint_states", self.joint_states_callback, 10)
+        self.sub_external_wrench = self.create_subscription(WrenchStamped, "wrench_external", self.wrench_callback, 10)
 
 
     def ctrl_loop_callback(self):
@@ -136,6 +138,14 @@ class ImpedenceController(Node):
 
         if not self.start_ctrl_loop:
             self.start_ctrl_loop = True
+
+
+    def wrench_callback(self, msg : WrenchStamped):
+
+        self.F_ext = np.array([
+            msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z, 
+            msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
+        ])
 
 def main(args=None):
     rclpy.init(args=args)
