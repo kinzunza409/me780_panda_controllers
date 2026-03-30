@@ -21,6 +21,7 @@ class MuJoCoBridge(Node):
         self.model_path = self.declare_parameter("model_path", "/workspace/assets/models/custom/scene_torque.xml").get_parameter_value().string_value
         self.model = self.model = mujoco.MjModel.from_xml_path(self.model_path)
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
         
         self.hand_id         = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hand")
         self.left_finger_id  = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "left_finger")

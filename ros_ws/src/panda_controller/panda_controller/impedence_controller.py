@@ -15,13 +15,13 @@ class ImpedenceController(Node):
     _DEFAULT_N_JOINTS = 7
     _DEFAULT_CTRL_LOOP_FREQ_HZ = 1024
 
-    _STARTING_Q = np.array([0.0, -np.pi/4, 0.0, -3*np.pi/4, 0.0, np.pi/2, np.pi/4, 0.035, 0.035])
+    #_STARTING_Q = np.array([0.0, -np.pi/4, 0.0, -3*np.pi/4, 0.0, np.pi/2, np.pi/4, 0.035, 0.035])
 
     _DEFAULT_LAMDA_D = np.diag([1.5, 1.5, 1.5, 0.1, 0.1, 0.1])
     _DEFAULT_K_D = np.diag([150, 150, 150, 8, 8, 8])
     _DEFAULT_D_D = np.diag([30, 30, 30, 3, 3, 3])
     
-    _DEFAULT_K_N = np.diag([50, 50, 50, 100, 25, 25, 25])
+    _DEFAULT_K_N = np.diag([10, 10, 10, 10, 10 ,10, 10])
     _DEFAULT_D_N = 2*np.sqrt(_DEFAULT_K_N) # critical damping
 
     _DEFAULT_x_d = np.concatenate([
@@ -49,7 +49,7 @@ class ImpedenceController(Node):
         self.n_joints = self.declare_parameter("n_joints", 7).get_parameter_value().integer_value
 
         # Desired end effector kinematics
-        self.x_d = self._DEFAULT_x_d
+        #self.x_d = self._DEFAULT_x_d
         self.x_d_dot = self._DEFAULT_x_d_dot
         self.x_d_ddot = self._DEFAULT_x_d_ddot
 
@@ -62,14 +62,27 @@ class ImpedenceController(Node):
         self.F_ext = np.zeros(6)
 
         # Initialize Pinocchio
+        # build reduced model
         model_path = "/workspace/assets/models/franka_emika_panda/panda.xml"
         full_model, *_ = pin.buildModelsFromMJCF(model_path)
-        self.model = pin.buildReducedModel(full_model, [8, 9], self._STARTING_Q) # lock gripper joints in place
+        q_home_full = full_model.referenceConfigurations["home"]
+        self.model = pin.buildReducedModel(full_model, [8, 9], q_home_full)
         self.data = self.model.createData()
+
+        # set initial x_d to be home position
+        q_home = q_home_full[:7]
+        pin.forwardKinematics(self.model, self.data, q_home)
+        pin.updateFramePlacements(self.model, self.data)
+        frame_id = self.model.getFrameId("hand")
+        T_home = self.data.oMf[frame_id]
+        #self.x_d = np.concatenate([T_home.translation.copy(), pin.log3(T_home.rotation.copy())])
+        #self.get_logger().info(f"x_d initialized from keyframe: {np.round(self.x_d, 3)}")
+        
+        # consider joint limits in null joint set points
         self.q_min = self.model.lowerPositionLimit
         self.q_max = self.model.upperPositionLimit
-        self.q_N = 0.5 * (self.q_min + self.q_max) # set desired null space config to be between joint limits
-
+        #self.q_N = 0.5 * (self.q_min + self.q_max) # set desired null space config to be between joint limits
+        self.q_N = q_home.copy()
 
         # Timers
         self.timer_ctrl_loop = self.create_timer(1/self.freq, self.ctrl_loop_callback)
@@ -86,6 +99,7 @@ class ImpedenceController(Node):
     def ctrl_loop_callback(self):
 
         if self.start_ctrl_loop:
+
             # update Pinocchio data
             pin.forwardKinematics(self.model, self.data, self.q, self.qdot)
             frame_id = self.model.getFrameId("hand")
@@ -100,7 +114,10 @@ class ImpedenceController(Node):
             g = pin.computeGeneralizedGravity(self.model, self.data, self.q)
 
             # get setpoints
-            x_d = self.x_d
+            x_d_pos = self.x_d_pos
+            x_d_rot = self.x_d_quat
+            
+
             x_d_dot = self.x_d_dot
             x_d_ddot = self.x_d_ddot
             q_N = self.q_N
@@ -132,11 +149,15 @@ class ImpedenceController(Node):
             x_dot = J @ q_dot
 
             # calculate errors
-            x_d_rot = pin.Quaternion(pin.exp3(x_d[3:]))
+            x_d_rot = self.x_d_quat
             x_d_rot = x_d_rot if x_rot.dot(x_d_rot) > 0 else pin.Quaternion(-x_d_rot.coeffs())
+
+            e_quat = x_d_rot.inverse() * x_rot          # error in desired frame
+            e_rot_world = x_d_rot.toRotationMatrix() @ e_quat.vec()  # rotate to world frame
+
             e = np.concatenate([
-                x_pos - x_d[:3],                       # translation
-                (x_d_rot.inverse() * x_rot).vec()      # rotation
+                x_pos - self.x_d_pos,
+                e_rot_world
             ])
             e_dot = x_dot - x_d_dot
 
@@ -187,6 +208,15 @@ class ImpedenceController(Node):
         self.tau    =   np.array(msg.effort[:7], dtype=np.float64)
 
         if not self.start_ctrl_loop:
+            pin.forwardKinematics(self.model, self.data, self.q)
+            pin.updateFramePlacements(self.model, self.data)
+            frame_id = self.model.getFrameId("hand")
+            T = self.data.oMf[frame_id]
+            self.x_d_pos = T.translation.copy()
+            self.x_d_quat = pin.Quaternion(T.rotation.copy())
+            self.q_N = self.q.copy()
+            self.get_logger().info(f"x_d_pos initialized from actual q: {np.round(self.x_d_pos, 4)}")
+            self.get_logger().info(f"x_d_quat initialized from actual q: {np.round(self.x_d_quat.coeffs(), 4)}")
             self.start_ctrl_loop = True
 
 
@@ -209,13 +239,15 @@ class ImpedenceController(Node):
                 self.get_logger().warn(
                     f"Joint {i+1} is near its LOWER limit: "
                     f"q={q[i]:.3f} rad, limit={self.q_min[i]:.3f} rad, "
-                    f"margin={margin[i]:.3f} rad"
+                    f"margin={margin[i]:.3f} rad",
+                    throttle_duration_sec=10
                 )
             if near_upper[i]:
                 self.get_logger().warn(
                     f"Joint {i+1} is near its UPPER limit: "
                     f"q={q[i]:.3f} rad, limit={self.q_max[i]:.3f} rad, "
-                    f"margin={margin[i]:.3f} rad"
+                    f"margin={margin[i]:.3f} rad",
+                    throttle_duration_sec=10
                 )
         
 
