@@ -102,8 +102,10 @@ class ImpedenceController(Node):
             
             # get errors
             # TODO: Lectures show e = x - x_d but logically it should be the other way around. Look into this
-            e       =   self.x_d - x
-            e_dot   =   self.x_d_dot - x_dot
+            #e       =   self.x_d - x
+            #e_dot   =   self.x_d_dot - x_dot
+            e = x - self.x_d
+            e_dot = x_dot -self.x_d_dot
             #e_ddot  =   x_ddot - self.x_d_ddot
 
             self.get_logger().info(f"e: {np.linalg.norm(e):.4f}  e_dot: {np.linalg.norm(e_dot):.4f}", throttle_duration_sec=10)
