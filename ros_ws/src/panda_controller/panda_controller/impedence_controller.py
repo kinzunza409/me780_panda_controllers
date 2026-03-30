@@ -20,6 +20,9 @@ class ImpedenceController(Node):
     _DEFAULT_LAMDA_D = np.diag([1.5, 1.5, 1.5, 0.1, 0.1, 0.1])
     _DEFAULT_K_D = np.diag([150, 150, 150, 8, 8, 8])
     _DEFAULT_D_D = np.diag([30, 30, 30, 3, 3, 3])
+    
+    _DEFAULT_K_N = np.diag([50, 50, 50, 100, 25, 25, 25])
+    _DEFAULT_D_N = 2*np.sqrt(_DEFAULT_K_N) # critical damping
 
     _DEFAULT_x_d = np.concatenate([
         np.array([0.5545, 0.0, 0.6245]),
@@ -54,6 +57,8 @@ class ImpedenceController(Node):
         self.Lambda_d = self._DEFAULT_LAMDA_D
         self.K_d = self._DEFAULT_K_D
         self.D_d = self._DEFAULT_D_D
+        self.K_N = self._DEFAULT_K_N
+        self.D_N = self._DEFAULT_D_N
         self.F_ext = np.zeros(6)
 
         # Initialize Pinocchio
@@ -61,6 +66,9 @@ class ImpedenceController(Node):
         full_model, *_ = pin.buildModelsFromMJCF(model_path)
         self.model = pin.buildReducedModel(full_model, [8, 9], self._STARTING_Q) # lock gripper joints in place
         self.data = self.model.createData()
+        self.q_min = self.model.lowerPositionLimit
+        self.q_max = self.model.upperPositionLimit
+        self.q_N = 0.5 * (self.q_min + self.q_max) # set desired null space config to be between joint limits
 
 
         # Timers
@@ -95,6 +103,7 @@ class ImpedenceController(Node):
             x_d = self.x_d
             x_d_dot = self.x_d_dot
             x_d_ddot = self.x_d_ddot
+            q_N = self.q_N
             
             # get sim data
             q = self.q
@@ -102,10 +111,14 @@ class ImpedenceController(Node):
             tau = self.tau
             F_ext = self.F_ext
 
+            self.check_joint_limits(q) # this is for debugging if null torques are doing their job
+
             # get controller parameters
             Lambda_d = self.Lambda_d
             K_d = self.K_d
             D_d = self.D_d
+            K_N = self.K_N
+            D_N = self.D_N
 
             T_ee = self.data.oMf[frame_id] # transform from world to EE
 
@@ -142,16 +155,27 @@ class ImpedenceController(Node):
             Lambda_d_inv = np.linalg.inv(Lambda_d)
             F_tau = Lambda @ x_d_ddot - Lambda @ Lambda_d_inv @ (D_d @ e_dot + K_d @ e) + (Lambda @ Lambda_d_inv - np.eye(6)) @ F_ext - Lambda @ J_dot @ q_dot
 
-            # calculate desired torques
-            tau_d = J_T @ F_tau + C @ q_dot + g
+            # calculate desired torques (cartesian)
+            tau_d_cart = J_T @ F_tau + C @ q_dot + g
+
+            # find null torques
+            tau_d_null = -K_N @ (q - q_N) - D_N @ q_dot
+            
+            # find null projector
+            _, _, Vh_T = np.linalg.svd(J, full_matrices=True)
+            V_T = Vh_T[6:,:] # extract null space basis
+            N_1 = V_T.T @ V_T
+
+            # get torques to send to robot
+            tau_d = tau_d_cart + N_1 @ tau_d_null
 
             msg = JointState()
             msg.effort = tau_d.tolist()
             self.pub_joint_torques.publish(msg)
 
-            self.get_logger().info(f"F_ext: {self.F_ext}", throttle_duration_sec=10)
-            self.get_logger().info(f"q: {np.round(q, 3)}", throttle_duration_sec=10)
-            self.get_logger().info(f"tau: {np.round(tau_d, 3)}", throttle_duration_sec=10)
+            #self.get_logger().info(f"F_ext: {self.F_ext}", throttle_duration_sec=10)
+            #self.get_logger().info(f"q: {np.round(q, 3)}", throttle_duration_sec=10)
+            #self.get_logger().info(f"tau: {np.round(tau_d, 3)}", throttle_duration_sec=10)
         
 
     def joint_states_callback(self, msg : JointState):
@@ -172,6 +196,27 @@ class ImpedenceController(Node):
                 msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z, 
                 msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
             ])
+        
+    # checks if given joint state q is close to joint limits
+    def check_joint_limits(self, q: np.ndarray, threshold: float = 0.1) -> None:
+        margin = threshold * (self.q_max - self.q_min)  # per-joint absolute margin
+
+        near_lower = q < (self.q_min + margin)
+        near_upper = q > (self.q_max - margin)
+
+        for i in range(len(q)):
+            if near_lower[i]:
+                self.get_logger().warn(
+                    f"Joint {i+1} is near its LOWER limit: "
+                    f"q={q[i]:.3f} rad, limit={self.q_min[i]:.3f} rad, "
+                    f"margin={margin[i]:.3f} rad"
+                )
+            if near_upper[i]:
+                self.get_logger().warn(
+                    f"Joint {i+1} is near its UPPER limit: "
+                    f"q={q[i]:.3f} rad, limit={self.q_max[i]:.3f} rad, "
+                    f"margin={margin[i]:.3f} rad"
+                )
         
 
 def main(args=None):
