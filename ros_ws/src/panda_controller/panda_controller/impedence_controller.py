@@ -218,8 +218,8 @@ class ImpedenceController(Node):
             self.x_d_pos = T.translation.copy()
             self.x_d_quat = pin.Quaternion(T.rotation.copy())
             self.q_N = self.q.copy()
-            self.get_logger().info(f"x_d_pos initialized from actual q: {np.round(self.x_d_pos, 4)}")
-            self.get_logger().info(f"x_d_quat initialized from actual q: {np.round(self.x_d_quat.coeffs(), 4)}")
+            self.get_logger().info(f"x_d_pos initialized from current state: {np.round(self.x_d_pos, 4)}")
+            self.get_logger().info(f"x_d_quat initialized from current state: {np.round(self.x_d_quat.coeffs(), 4)}")
             self.start_ctrl_loop = True
 
 
