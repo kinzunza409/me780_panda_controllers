@@ -4,7 +4,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import WrenchStamped
+from geometry_msgs.msg import WrenchStamped, PoseStamped
 
 import pinocchio as pin
 
@@ -94,6 +94,7 @@ class ImpedenceController(Node):
         # Subscribers
         self.sub_joint_states = self.create_subscription(JointState, "joint_states", self.joint_states_callback, 10)
         self.sub_external_wrench = self.create_subscription(WrenchStamped, "wrench_external", self.wrench_callback, 10)
+        self.sub_desired_pose = self.create_subscription(PoseStamped, "desired_ee_pose", self.pose_callback, 10)
 
 
     def ctrl_loop_callback(self):
@@ -120,6 +121,8 @@ class ImpedenceController(Node):
 
             x_d_dot = self.x_d_dot
             x_d_ddot = self.x_d_ddot
+            
+            # TODO: set q_N as q for x_d (run IK)
             q_N = self.q_N
             
             # get sim data
@@ -226,6 +229,58 @@ class ImpedenceController(Node):
                 msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z, 
                 msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
             ])
+        
+    def pose_callback(self, msg : PoseStamped):
+        
+        self.x_d_pos, self.x_d_quat = self.pose_stamped_to_xd(msg)
+        self.q_N = self.ik(self.x_d_pos, self.x_d_quat, self.q) 
+
+    @staticmethod
+    def pose_stamped_to_xd(msg: PoseStamped) -> tuple[np.ndarray, pin.Quaternion]:
+        
+        x_pos = np.array([
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        ])
+        
+        quat = msg.pose.orientation
+        x_rot = pin.Quaternion(quat.w, quat.x, quat.y, quat.z).normalize() # normalize to fix floating point accumulation
+    
+        return x_pos, x_rot
+    
+
+    
+    # inverse kinematics using CLIK
+    def ik(self, x_pos : np.ndarray, x_rot : pin.Quaternion, q0 : np.ndarray, max_iter=1000, tol=1e-4, step_size=0.5):
+        ee_id = self.model.getFrameId("hand")
+
+        target = pin.SE3(
+            x_rot.toRotationMatrix(),
+            np.array(x_pos)
+        )
+
+        q = q0.copy()
+
+        for i in range(max_iter):
+            pin.framesForwardKinematics(self.model, self.data, q)
+            T_current = self.data.oMf[ee_id]
+
+            err = pin.log6(T_current.inverse() * target).vector
+
+            if np.linalg.norm(err) < tol:
+                return q
+
+            pin.computeJointJacobians(self.model, self.data, q)
+            J = pin.getFrameJacobian(self.model, self.data, ee_id, pin.ReferenceFrame.LOCAL)
+
+            J_pinv = np.linalg.pinv(J)
+            dq = step_size * J_pinv @ err
+
+            q = pin.integrate(self.model, q, dq)
+            q = pin.normalize(self.model, q)
+
+        raise RuntimeError(f"IK failed to converge. Final error: {np.linalg.norm(err):.6f}")
         
     # checks if given joint state q is close to joint limits
     def check_joint_limits(self, q: np.ndarray, threshold: float = 0.1) -> None:
